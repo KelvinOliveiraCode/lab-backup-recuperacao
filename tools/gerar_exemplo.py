@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
 import shutil
 import sys
 import tempfile
@@ -38,6 +39,28 @@ def _roda(argv: list[str]) -> tuple[int, str]:
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         return cli_main(argv), buffer.getvalue().rstrip("\n")
+
+
+def _estabiliza(texto: str) -> str:
+    """Troca a taxa de compressao por um marcador estavel entre maquinas.
+
+    A taxa depende da versao do zlib que vier com o Python: o mesmo arquivo
+    comprime em 55,38% no 3.11 e 56,49% no 3.14. Um numero que muda com o
+    interpretador nao pode fazer parte de um exemplo versionado, senao o CI
+    falha em toda maquina que nao for a que gerou o arquivo.
+
+    Args:
+        texto: A saida real da CLI.
+
+    Returns:
+        A mesma saida com a taxa substituida.
+    """
+
+    return re.sub(
+        r"taxa: \d+[.,]\d+%",
+        "taxa: <depende da versao do zlib do interpretador>",
+        texto,
+    )
 
 
 def principal() -> int:
@@ -72,8 +95,7 @@ def principal() -> int:
         "",
         "```",
         f"[codigo de saida: {codigo_bkp}]",
-        texto_bkp,
-        "```",
+        _estabiliza(texto_bkp),        "```",
         "",
         "```powershell",
         "python -m backuplab restaurar --backup saida/arquivos --destino restaurado/ --verificar --origem dados/arquivos-originais",
@@ -81,7 +103,7 @@ def principal() -> int:
         "",
         "```",
         f"[codigo de saida: {codigo_res}]",
-        texto_res,
+        _estabiliza(texto_res),
         "```",
         "",
     ]
