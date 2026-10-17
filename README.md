@@ -1,53 +1,95 @@
-<div align="center">
+# lab-backup-recuperacao
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/tests-48%20passing-brightgreen?style=flat-square" alt="Tests">
-  <img src="https://img.shields.io/badge/coverage-90%25-green-brightgreen?style=flat-square" alt="Coverage">
-  <img src="https://img.shields.io/badge/deps-zero%20deps-brightgreen?style=flat-square" alt="Deps">
-  <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square" alt="Windows">
+  <img src="https://img.shields.io/badge/testes-48%20passing-brightgreen?style=flat-square" alt="Testes">
+  <img src="https://img.shields.io/badge/cobertura-90%25-green?style=flat-square" alt="Cobertura">
+  <img src="https://img.shields.io/badge/deps-zero%20deps-brightgreen?style=flat-square" alt="Dependencias">
+  <img src="https://img.shields.io/badge/licenca-MIT-yellow?style=flat-square" alt="Licenca">
 </p>
 
-</div>
+Backup local com ciclo completo testado: detecção incremental por SHA-256, compressão zip/lzma, rotina GFS (7-4-12) e restauração com verificação byte a byte.
 
-# lab-backup-recuperacao
+## Problema / Por que existe
 
-Backup local com ciclo completo testado: detecta mudança por hash, comprime,
-aplica rotina GFS, restaura e confere byte a byte.
+Um arquivo copiado para outra pasta é um inventário, não um backup. Backup só vale se a restauração foi testada, e um backup que restaura diferente do original é pior que nenhum backup: ocupa disco e dá falsa sensação de segurança. Este projeto demonstra o ciclo completo com a prova: executa o backup, restaura e confere o hash de cada arquivo contra a origem.
 
-Local backup with a tested full cycle: hash-based change detection,
-compression, GFS schedule, restore with byte-level verification.
+## O que faz
 
-> **Nada aqui é real.** Os 500 arquivos são inventados, e nenhum caminho de
-> sistema é tocado. Tudo acontece em pastas do projeto.
+O pacote `backuplab` expõe dois comandos pela CLI.
 
-## O que é
+`executar` faz o backup incremental:
+- varre a origem recursivamente e calcula o SHA-256 de cada arquivo em blocos de 64 KiB
+- compara com o manifesto salvo: arquivos novos (caminho ausente) e modificados (mesmo caminho, hash diferente) entram na cópia; data e tamanho não são usados para decidir
+- comprime cada arquivo em ZIP (DEFLATE) ou LZMA e grava em `<destino>/arquivos/<caminho>.<metodo>`
+- regrava o manifesto em `<destino>/manifesto.json`
+- imprime contagem de arquivos e taxa de compressão
 
-Quinhentos arquivos fictícios, backup incremental por SHA-256, compressão zip
-e lzma, rotina GFS (7 diários, 4 semanais, 12 mensais) com expiração, e
-restauração que confere hash contra a origem. O teste do ciclo inteiro roda
-num comando.
+`restaurar` traz os arquivos de volta:
+- descomprime `.zip` e `.lzma` de volta ao nome sem extensão
+- ignora o `manifesto.json` (é metadado do backup, não dado da origem)
+- copia pacotes corrompidos como estão para a verificação acusar a divergência depois, em vez de interromper a restauração na metade
+- com `--verificar --origem`, compara o SHA-256 de cada arquivo restaurado com a origem e sai com código 1 se houver divergência
 
-## Por que foi feito
+Na segunda execução sem mudanças, nada é copiado: incremental de verdade, não backup completo com outro nome.
 
-Backup só vale se a restauração foi testada. Um arquivo salvo em outro lugar
-é um inventário, não um backup — e backup não testado é ilusão. Demonstrar o
-ciclo completo, com a prova, é raro e valorizado.
+## Stack
+
+- Python 3.10+
+- Biblioteca padrão apenas: `hashlib`, `zipfile`, `lzma`, `json`, `pathlib`, `shutil`, `argparse`, `dataclasses`. Zero dependências de execução (`dependencies = []` em `pyproject.toml`).
+- Desenvolvimento: `pytest>=7.4`, `pytest-cov>=4.1`
+- Formatos: ZIP/DEFLATE e LZMA, um pacote por arquivo, sem deduplicação entre arquivos
+
+## Como funciona
+
+1. **Varrer**: `incremental.varrer` lê todos os arquivos da origem, ordena por caminho relativo e calcula o SHA-256 de cada um.
+2. **Comparar**: `Manifesto.mudancas` retorna novos, modificados e removidos comparando o estado atual com o manifesto salvo. O hash muda se e somente se o conteúdo mudar.
+3. **Copiar e comprimir**: cada arquivo novo ou modificado é lido, comprimido com o método escolhido (`zip` padrão, `lzma` opcional via `--metodo`) e gravado em `<destino>/arquivos/<caminho>.<metodo>`.
+4. **Manifesto**: o estado completo é salvo em `<destino>/manifesto.json`.
+5. **Restaurar**: `restauracao.restaurar` descomprime cada pacote de volta ao nome original; pacotes corrompidos são copiados intactos.
+6. **Verificar**: `verificacao.comparar` confere os catálogos de hash de origem e restauração; arquivo diferente ou ausente na restauração derruba o veredicto.
 
 ## Como rodar
 
-```powershell
+Instalação em modo editável, com dependências de desenvolvimento:
+
+```
+pip install -e ".[dev]"
+```
+
+Após instalar, o comando `backuplab` também fica disponível (`backuplab = "backuplab.cli:main"`).
+
+Primeiro backup:
+
+```
+python -m backuplab executar --origem dados/arquivos-originais --destino saida/
+```
+
+Saída típica da primeira execução:
+
+```
+arquivos na origem: 500
+novos: 500  modificados: 0
+copiados: 500  taxa: 0.55
+```
+
+O valor da taxa depende da versão do zlib do interpretador (texto comprime bem, binário não).
+
+Segunda execução, sem mudanças na origem:
+
+```
 python -m backuplab executar --origem dados/arquivos-originais --destino saida/
 ```
 
 ```
 arquivos na origem: 500
-novos: 500  modificados: 0
-copiados: 500  taxa: 55.38%
+novos: 0  modificados: 0
+copiados: 0  taxa: 0.00
 ```
 
-```powershell
+Restaurar com verificação contra a origem:
+
+```
 python -m backuplab restaurar --backup saida/arquivos --destino restaurado/ --verificar --origem dados/arquivos-originais
 ```
 
@@ -56,103 +98,62 @@ restaurados e conferidos
 todos os arquivos conferem com a origem
 ```
 
-A segunda execução sem mudança não copia nada — incremental de verdade, não
-backup completo com outro nome.
+Códigos de saída da CLI: 0 ok, 1 divergência na restauração, 2 erro (origem ou backup ausente).
 
-Instalação:
+Testes:
 
-```powershell
-pip install -e ".[dev]"
 ```
-
-## Por que hash e não data
-
-Data de modificação é metadado do sistema de arquivos, não do conteúdo. Cópia
-entre discos, fuso errado, restauração — qualquer um muda a data sem mudar um
-byte. Hash muda se e somente se o conteúdo mudar. O teste `test_toque_sem_
-mudanca_nao_copia` prova: data futura, mesmo conteúdo, nada copiado.
-
-## GFS: 7-4-12
-
-O recente com densidade, o antigo com esparsidade: 7 diários cobrem a semana,
-4 semanais cobrem o mês, 12 mensais cobrem o ano. Nome fora do padrão cai em
-diário — janela curta, para o desconhecido expirar rápido.
-
-## O que aprendi
-
-- **Restaurar comprimido sem descomprimir não é restaurar.** A primeira versão
-  guardava `.zip` e devolvia `.zip`. O ciclo só fechou com descompressão na
-  volta.
-- **Pacote corrompido não pode parar a restauração.** Ele é copiado como está
-  e a verificação acusa depois. Parar no meio deixa o destino pela metade sem
-  dizer o que falta.
-- **Manifesto não é dado.** Restaurá-lo junto criava um arquivo que nunca
-  existiu na origem, e a verificação acusava o próprio instrumento.
-- **Segunda execução zerada é o teste do incremental.** Se copia sem mudança,
-  não é incremental.
-- **Taxa de 55% mente.** É a média de texto que comprime bem com binário que
-  não comprime. Uma taxa só diz algo por tipo de conteúdo.
-
-## Testes
-
-```powershell
 python -m pytest -v
 ```
 
-48 testes, 90% de cobertura. Cobrem detecção por hash, round-trip nos três
-tipos, verificação com 1 byte trocado, restauração com pacote corrompido, GFS,
-CLI e o portão de encoding.
+Resultado: 48 testes passando, cobertura 90% (exige 70%).
 
-```powershell
+Ferramentas de apoio:
+
+```
 python tools/verificar_aceite.py     # 500 identicos + GFS + incremental
 python tools/verificar_encoding.py   # nenhum caractere corrompido
 python tools/gerar_exemplo.py        # regenera o exemplo deterministico
 ```
 
-## Limitações
+## Estrutura do projeto
 
-- **Lê tudo, toda vez.** Hash exige leitura completa; para terabytes seria
-  preciso outra estratégia. O módulo diz isso em vez de fingir que escala.
-- **Sem backup remoto.** Tudo é pasta local; não há envio, criptografia em
-  trânsito nem autenticação.
-- **Sem backup aberto.** Arquivo em uso pode ser copiado pela metade; não há
-  snapshot nem trava.
-- **GFS por nome, não por data.** A classificação lê o nome do backup; data
-  real não entra.
-- **Compressão por arquivo.** Sem deduplicação entre arquivos, sem delta.
+```
+lab-backup-recuperacao/
+  src/backuplab/        pacote: cli, incremental, compressao, restauracao, verificacao, politica
+  tests/                48 testes: cli, compressao, incremental, restauracao, verificacao
+  docs/                 politica-de-retencao.md, teste-de-restauracao.md
+  exemplos/             relatorio-backup.md (saida real copiada por gerar_exemplo.py)
+  tools/                gerar_exemplo.py, gerar_arquivos.py, verificar_aceite.py, verificar_encoding.py
+  dados/arquivos-originais/  500 arquivos ficticios (doc, dado, bin) usados nos testes
+  pyproject.toml        build, ponto de entrada, pytest, coverage
+  requirements.txt      dependencias de desenvolvimento
+  LICENSE               MIT
+```
+
+## Trade-offs e decisões
+
+- Hash em vez de data: a data de modificação é metadado do sistema de arquivos e muda sem mudar um byte (cópia entre discos, fuso horário, restauração). O SHA-256 muda se e somente se o conteúdo mudar. O custo é ler o arquivo inteiro a cada varredura.
+- Um pacote por arquivo: simples e isola corrupção (um pacote ruim não invalida os outros), sem deduplicação nem delta entre arquivos.
+- Pacote corrompido não interrompe a restauração: é copiado como está e a verificação acusa depois. Parar na metade deixa o destino incompleto sem dizer o que falta.
+- Manifesto não é dado: não é restaurado junto, senão criaria um arquivo que nunca existiu na origem e a verificação acusaria o próprio instrumento de medida.
+- Compressão por arquivo: cada arquivo é um pacote independente; restaurar um não exige ler os outros.
+- GFS por nome, não por data: o tipo vem do prefixo do diretório (`diario-`, `semanal-`, `mensal-`). Nome fora do padrão vira diário, a janela mais curta, para backups desconhecidos expirarem rápido em vez de ocupar espaço para sempre.
+- Retenção GFS 7-4-12: 7 diários cobrem a semana, 4 semanais cobrem o mês, 12 mensais cobrem o ano; cada janela expira sozinha.
+
+## Limitações conhecidas
+
+- Lê tudo, toda vez: o hash exige leitura completa de cada arquivo; para terabytes seria precisa outra estratégia. O módulo diz isso em vez de fingir que escala.
+- Sem backup remoto: apenas pastas locais; não há envio, criptografia em trânsito nem autenticação.
+- Sem backup aberto: arquivo em uso pode ser copiado pela metade; não há snapshot nem trava.
+- Sem deduplicação entre arquivos: compressão é por arquivo, sem delta.
+- GFS por nome: a classificação lê o nome do backup; a data real não entra.
+- Dados fictícios: os 500 arquivos de `dados/` são inventados para teste de laboratório; nenhum caminho do sistema é tocado.
 
 ## Licença
 
 MIT.
 
----
+## Autor
 
-## English
-
-Local backup with a tested full cycle: 500 fictitious files, SHA-256
-incremental detection, zip/lzma compression, GFS schedule (7-4-12) with
-expiry, restore with hash verification.
-
-Hash, not mtime: copy preserves dates, timezones lie, content doesn't. A
-second run with no changes copies nothing. Corrupt archives don't stop the
-restore — verification flags them after.
-
-### Tests
-
-48 tests, 90% coverage.
-
-```powershell
-python -m pytest -v
-python tools/verificar_aceite.py
-python tools/verificar_encoding.py
-python tools/gerar_exemplo.py
-```
-
-### Limitations
-
-Reads everything every time; no remote backup; no open-file handling; GFS by
-name; per-file compression, no dedup.
-
-### License
-
-MIT.
+Kelvin
