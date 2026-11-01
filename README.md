@@ -1,118 +1,126 @@
 # lab-backup-recuperacao
 
-<div align="center">
-
 [English](README.en.md) · **Português (Brasil)**
 
-</div>
-
-[![Python 3](https://img.shields.io/badge/Python-3.x-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/) [![scikit-learn](https://img.shields.io/badge/scikit--learn-F7931E?style=flat-square&logo=scikit-learn)](https://scikit-learn.org/) [![pandas](https://img.shields.io/badge/pandas-150458?style=flat-square&logo=pandas)](https://pandas.pydata.org/) [![pytest](https://img.shields.io/badge/pytest-0A9EDC?style=flat-square&logo=pytest)](https://docs.pytest.org/) [![MIT License](https://img.shields.io/badge/License-MIT-f4c430?style=flat-square)](LICENSE)
-
-### Backup local com ciclo completo: hash, compressao, GFS, restauracao e conferencia byte a byte
-
----
+[![Python 3](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#) [![stdlib-only](https://img.shields.io/badge/Depend%C3%AAncias-0%20(stdlib)-4CAF50?style=flat-square)](#) [![pytest](https://img.shields.io/badge/pytest-48%20testes-0A9EDC?style=flat-square&logo=pytest)](#) [![MIT License](https://img.shields.io/badge/License-MIT-f4c430?style=flat-square)](LICENSE)
 
 ## O que é
 
-Backup local com ciclo completo: hash, compressao, GFS, restauracao e conferencia byte a byte
+**backuplab**: backup local com ciclo completo — incremental por hash SHA-256, compressão (zip/lzma), política de retenção GFS, restauração e conferência byte a byte. CLI em Python puro (zero dependências de execução) e também um laboratório educacional de backup.
 
----
+## Status
 
-## Início Rápido
+Funcional e testado: **48 testes** passando (`pytest tests/`). CLI com dois comandos: `executar` e `restaurar`.
 
-```bash
-# Clone e entre
-git clone https://github.com/KelvinOliveiraCode/<repo>.git
-cd <repo>
+## Funcionalidades
 
-# Instale dependências
-# Nenhum requirements.txt detectado
+- **Backup incremental** (`incremental.py`): varre a origem, calcula SHA-256 de cada arquivo, grava um **manifesto** e copia só o que mudou (novo ou hash diferente).
+- **Compressão** (`compressao.py`): tenta `zipfile` e `lzma`, guarda o menor (`melhor()`) e relata a taxa.
+- **Política GFS** (`politica.py`): classifica cada backup (por janela de retenção) e `expirar()` aponta os backups expirados.
+- **Restauração** (`restauracao.py`): `restaurar()` extrai o backup para um destino; `restaurar_e_verificar()` restaura e compara os hashes contra a origem.
+- **Verificação byte a byte** (`verificacao.py`): `catalogo()` + `comparar()` devolvem iguais/diferentes/faltando; `verificar_restauracao()` só é `True` quando tudo confere.
+- **CLI** (`backuplab`): `executar` e `restaurar`, com `--metodo zip|lzma`, `--verificar` e `--origem` (referência da conferência).
 
-# Execute o projeto
-python main.py
+## Arquitetura
 
-# Execute os testes
-pytest
+Pacote `backuplab` (em `src/`) com um módulo por etapa do ciclo; `cli.py` orquestra os subcomandos.
+
+```mermaid
+flowchart LR
+    O[origem] --> INC[incremental.py - sha256 + manifesto]
+    INC --> CMP[compressao.py - zip vs lzma]
+    CMP --> BK[diretório do backup]
+    BK --> RES[restauracao.py - extrair]
+    RES --> VER[verificacao.py - conferir hash]
+    O --> VER
+    CLI[cli.py - executar/restaurar] --> INC
 ```
 
-## Como funciona
+## Stack
 
-Estrutura limpa e modular com separação de responsabilidades.
+- Python ≥ 3.10 — **dependência de execução: zero** (zipfile, lzma, hashlib e shutil são stdlib)
+- pytest ≥ 7.4 (dev, opcional)
+- GitHub Actions (`ci.yml`) roda os testes no CI
 
----
+## Estrutura do repositório
 
-## Capacidades
+```
+lab-backup-recuperacao/
+├── pyproject.toml · requirements.txt · LICENSE
+├── src/backuplab/
+│   ├── cli.py          # parser e subcomandos executar/restaurar
+│   ├── incremental.py  # varredura, sha256, manifesto (Estado/Manifesto)
+│   ├── compressao.py   # zip vs lzma, melhor(), taxa
+│   ├── politica.py     # GFS: classificar e expirar
+│   ├── restauracao.py  # restaurar + restaurar_e_verificar
+│   ├── verificacao.py  # catálogo de hashes + comparação
+│   └── __main__.py     # python -m backuplab
+├── tests/              # 48 testes (cli, compressao, incremental, restauracao, verificacao)
+├── dados/              # arquivos de exemplo (gerados, 100 grupos)
+├── docs/               # politica-de-retencao.md, teste-de-restauracao.md
+├── exemplos/           # relatorio-backup.md
+├── tools/              # geradores de dados de exemplo
+└── .github/workflows/ci.yml
+```
 
-| Capacidade | Descrição |
-|------------|-------------|
-| Carregamento de Dados | Auto-download do TensorFlow creditcard.csv (284k transações) com cache local |
-| EDA e Visualização | Distribuição de classes, histogramas de Amount, heatmaps de correlação (matplotlib/seaborn) |
-| Pré-processamento | RobustScaler em Amount/Time, split estratificado, remoção de duplicatas |
-| Balanceamento | SMOTE oversampling (fallback: class_weight="balanced") |
-| Modelagem | LogisticRegression, RandomForest, ExtraTrees com RandomizedSearchCV (StratifiedKFold) |
-| Métricas | Accuracy, Precision, Recall, F1, ROC AUC, Specificity, Confusion Matrix |
-| Seleção | Score ponderado: Recall 40% + F1 30% + Precision 20% + Accuracy 10% |
-| Persistência | Serialização joblib para modelo, scaler e resultados completos |
+## Pré-requisitos e instalação
 
+Python ≥ 3.10. Sem dependências de execução.
 
----
+```bash
+pip install -e .          # instala o CLI `backuplab`
+pip install -e ".[dev]"   # opcional: pytest
+```
 
+## Como executar
 
+```bash
+# backup incremental (default zip; lzma comprime mais)
+backuplab executar --origem meus-dados --destino backups/
 
----
+# restaurar e conferir contra a origem
+backuplab restaurar --backup backups/ --destino restauracao/ --origem meus-dados --verificar
 
-## Perguntas Frequentes
+# ou sem instalar
+python -m backuplab executar --origem meus-dados --destino backups/
+```
 
-<details>
-<summary><strong>O que é este projeto?</strong></summary>
+Saída real de um `executar` (verificada pelo agente):
 
-Um estudo/projeto em Python demonstrando conceitos fundamentais.
+```
+arquivos na origem: 1
+novos: 1  modificados: 0
+copiados: 1  taxa: 1933.33%
+```
 
-</details>
+## Testes e qualidade
 
-<details>
-<summary><strong>Como executar?</strong></summary>
+Comando real (verificado pelo agente):
 
-Veja [Início Rápido](#início-rápido) para comandos copiáveis.
+```bash
+python -m pytest tests/
+# 48 passed
+```
 
-</details>
+## Decisões técnicas e trade-offs
 
-<details>
-<summary><strong>Há testes?</strong></summary>
+- **Zero dependências de execução**: roda em qualquer Python 3.10+; em troca, sem nuvem, criptografia ou agendador.
+- **SHA-256 por arquivo**: incremental exato e verificação byte a byte; em troca, relê tudo a cada ciclo (mais lento que `mtime`).
+- **Dupla tentativa de compressão**: o menor arquivo vence; lzma comprime mais, mas custa CPU.
+- **GFS próprio** (janela de retenção): transparente e testável; em troca, sem integração com serviços de armazenamento.
 
-Nenhum teste automatizado neste repositório.
+## Limitações conhecidas e roadmap
 
-</details>
+- Backup é local: sem upload para S3/B2 e sem criptografia.
+- A expiração GFS é uma função da biblioteca; agendar (cron/Task Scheduler) fica fora do CLI.
+- Sem snapshot de volume — só arquivos regulares da origem.
 
-<details>
-<summary><strong>Posso usar em produção?</strong></summary>
+## Processo de desenvolvimento
 
-Este é um **projeto de estudo/portfólio**. Revise e endureça (auth, persistência, monitoramento, etc.) antes de usar em produção.
+Projeto individual de Kelvin Oliveira, construído com agentes de IA orquestrados e revisado pelo autor. O design do ciclo de backup e a revisão são do autor.
 
-</details>
+## Licença e autor
 
+MIT — Copyright (c) 2026 Kelvin Rebelo de Oliveira.
 
-
----
-
-## Documentação
-
-- **Código-Fonte** ,  Navegue pelo diretório `src/` para detalhes de implementação
-- **Referência da API** ,  Docstrings inline + type hints
-- **Diagrama de Arquitetura** ,  Veja [architecture.mermaid](docs/architecture.mermaid) (se presente)
-- **Changelog** ,  [CHANGELOG.md](CHANGELOG.md) (se presente)
-- **Contribuindo** ,  [CONTRIBUTING.md](CONTRIBUTING.md) (se presente)
-
-## Licença
-
-[MIT](LICENSE) ,  Kelvin Oliveira
-
----
-
-<div align="center">
-
-**Construído com** · Python 3 + scikit-learn + pandas
-
-**Autor** · [Kelvin Oliveira](https://github.com/KelvinOliveiraCode) · [Portfolio](https://kelvinoliveiracode.github.io/portfolio/)
-
-</div>
+**Autor**: [Kelvin Oliveira](https://github.com/KelvinOliveiraCode) · [Portfólio](https://kelvinoliveiracode.github.io/portfolio/)
